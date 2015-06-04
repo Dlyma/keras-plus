@@ -496,8 +496,11 @@ class DEEPLSTM(Layer):
         if self.num_blocks > 1:
             output_list = [outputs[:, i] for i in range(self.num_blocks)]
             final_outputs = T.concatenate(output_list, axis=-1) #[T, sz, output_dim * num_blocks]
-        
-        if self.return_seq_num > 1:
+       
+        if self.return_seq_num <= 0:
+            return final_outputs.dimshuffle((1,0,2))
+
+        elif self.return_seq_num > 1:
             return final_outputs[-self.return_seq_num:].dimshuffle((1,0,2))
 
         return final_outputs[-1]
