@@ -5,7 +5,7 @@ import theano.tensor as T
 import numpy as np
 
 from .. import activations, initializations
-from ..utils.theano_utils import shared_zeros, alloc_zeros_matrix
+from ..utils.theano_utils import shared_zeros, sharedX, alloc_zeros_matrix
 from ..layers.core import Layer
 from six.moves import range
 
@@ -366,5 +366,152 @@ class LSTM(Layer):
             "inner_activation":self.inner_activation.__name__,
             "truncate_gradient":self.truncate_gradient,
             "return_sequences":self.return_sequences}
+        
+# added by zhaowuxia begins
+# a layer of num_blocks single-cell LSTM blocks, [output of block[i], x] feeds block[i+1]
+# each block has its own forget gate
+class DEEPLSTM(Layer):
+    '''
+        Acts as a spatiotemporal projection,
+        turning a sequence of vectors into a single vector.
+
+        Eats inputs with shape:
+        (nb_samples, max_sample_length (samples shorter than this are padded with zeros at the end), input_dim)
+
+        and returns outputs with shape:
+        if return_seq_num > 1:
+            (nb_samples, return_seq_num, output_dim*num_blocks)
+        else:
+            (nb_samples, output_dim*num_blocks)
+        For a step-by-step description of the algorithm, see:
+        http://deeplearning.net/tutorial/lstm.html
+
+        References:
+            Long short-term memory (original 97 paper)
+                http://deeplearning.cs.cmu.edu/pdfs/Hochreiter97_lstm.pdf
+            Learning to forget: Continual prediction with LSTM
+                http://www.mitpressjournals.org/doi/pdf/10.1162/089976600300015015
+            Supervised sequence labelling with recurrent neural networks
+                http://www.cs.toronto.edu/~graves/preprint.pdf
+    '''
+    def __init__(self, input_dim, output_dim=128, 
+        init='glorot_uniform', inner_init='orthogonal', 
+        activation='tanh', inner_activation='hard_sigmoid',
+        weights=None, truncate_gradient=-1, return_seq_num=1, 
+        num_blocks=1):
+    
+        super(DEEPLSTM,self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.truncate_gradient = truncate_gradient
+        self.return_seq_num = return_seq_num
+        self.num_blocks = num_blocks
+
+        self.init = initializations.get(init)
+        self.inner_init = initializations.get(inner_init)
+        self.activation = activations.get(activation)
+        self.inner_activation = activations.get(inner_activation)
+        self.input = T.tensor3()
+
+        self.W_i = self.init((self.num_blocks, self.input_dim, self.output_dim))
+        self.U_i = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
+        self.b_i = shared_zeros((self.num_blocks, self.output_dim))
+
+        self.W_f = self.init((self.num_blocks, self.input_dim, self.output_dim))
+        self.U_f = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
+        # large initialization of forget gate is better
+        self.b_f = sharedX(np.ones((self.num_blocks, self.output_dim))*5)
+
+        self.W_c = self.init((self.num_blocks, self.input_dim, self.output_dim))
+        self.U_c = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
+        self.b_c = shared_zeros((self.num_blocks, self.output_dim))
+
+        self.W_o = self.init((self.num_blocks, self.input_dim, self.output_dim))
+        self.U_o = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
+        self.b_o = shared_zeros((self.num_blocks, self.output_dim))
+
+        self.params = [
+            self.W_i, self.U_i, self.b_i,
+            self.W_c, self.U_c, self.b_c,
+            self.W_f, self.U_f, self.b_f,
+            self.W_o, self.U_o, self.b_o,
+        ]
+
+        if weights is not None:
+            self.set_weights(weights)
+
+    def _step(self, 
+        #xi_t, xf_t, xo_t, xc_t, 
+        x,
+        h_tm1, c_tm1, 
+        u_i, u_f, u_o, u_c, 
+        w_i, w_f, w_o, w_c,
+        sz):
+
+        h_t = T.unbroadcast(alloc_zeros_matrix(self.num_blocks, sz, self.output_dim), 2)
+        c_t = T.unbroadcast(alloc_zeros_matrix(self.num_blocks, sz, self.output_dim), 2)
+        
+        for i in range(self.num_blocks):
+            xi_t = T.dot(x, self.W_i[i]) + self.b_i[i]
+            xf_t = T.dot(x, self.W_f[i]) + self.b_f[i]
+            xc_t = T.dot(x, self.W_c[i]) + self.b_c[i]
+            xo_t = T.dot(x, self.W_o[i]) + self.b_o[i]
+            if i == 0:
+                i_t = self.inner_activation(xi_t + T.dot(h_tm1[i], u_i[i]))
+                f_t = self.inner_activation(xf_t + T.dot(h_tm1[i], u_f[i]))
+                c_t = T.set_subtensor(c_t[i], f_t * c_tm1[i] + i_t * self.activation(xc_t + T.dot(h_tm1[i], u_c[i])))
+                o_t = self.inner_activation(xo_t + T.dot(h_tm1[i], u_o[i]))
+                h_t = T.set_subtensor(h_t[i], o_t * self.activation(c_t[i]))
+            else:
+                i_t = self.inner_activation(xi_t + T.dot(h_t[i-1], u_i[i]))
+                f_t = self.inner_activation(xf_t + T.dot(h_t[i-1], u_f[i]))
+                c_t = T.set_subtensor(c_t[i], f_t * c_tm1[i] + i_t * self.activation(xc_t + T.dot(h_t[i-1], u_c[i])))
+                o_t = self.inner_activation(xo_t + T.dot(h_t[i-1], u_o[i]))
+                h_t = T.set_subtensor(h_t[i], o_t * self.activation(c_t[i]))
+        
+        return h_t, c_t
+
+    def get_output(self, train):
+        X = self.get_input(train) 
+        X = X.dimshuffle((1,0,2)) #[T, sz, input_dim]
+        
+        '''
+        xi = T.dot(X, self.W_i[0]) + self.b_i[0]
+        xf = T.dot(X, self.W_f[0]) + self.b_f[0]
+        xc = T.dot(X, self.W_c[0]) + self.b_c[0]
+        xo = T.dot(X, self.W_o[0]) + self.b_o[0]
+        '''
+        [outputs, memories], updates = theano.scan(
+            self._step, 
+            #sequences=[xi, xf, xo, xc],
+            sequences=[X],
+            outputs_info=[
+                T.unbroadcast(alloc_zeros_matrix(self.num_blocks, X.shape[1], self.output_dim), 2),
+                T.unbroadcast(alloc_zeros_matrix(self.num_blocks, X.shape[1], self.output_dim), 2)
+            ], 
+            non_sequences=[self.U_i, self.U_f, self.U_o, self.U_c, self.W_i, self.W_f, self.W_o, self.W_c, X.shape[1]], 
+            truncate_gradient=self.truncate_gradient 
+        )
+        
+        if self.num_blocks > 1:
+            output_list = [outputs[:, i] for i in range(self.num_blocks)]
+            final_outputs = T.concatenate(output_list, axis=-1) #[T, sz, output_dim * num_blocks]
+        
+        if self.return_seq_num > 1:
+            return final_outputs[-self.return_seq_num:].dimshuffle((1,0,2))
+
+        return final_outputs[-1]
+
+    def get_config(self):
+        return {"name":self.__class__.__name__,
+            "input_dim":self.input_dim,
+            "output_dim":self.output_dim,
+            "init":self.init.__name__,
+            "inner_init":self.inner_init.__name__,
+            "activation":self.activation.__name__,
+            "inner_activation":self.inner_activation.__name__,
+            "truncate_gradient":self.truncate_gradient,
+            "return_seq_num":self.return_seq_num,
+            "num_blocks":self.num_blocks}
         
 
