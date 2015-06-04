@@ -184,7 +184,11 @@ class Sequential(Model):
 
 
     def fit(self, X, y, batch_size=128, nb_epoch=100, verbose=1, callbacks=[],
-            validation_split=0., validation_data=None, shuffle=True, show_accuracy=False):
+            validation_split=0., validation_data=None, shuffle=True, show_accuracy=False,
+            # added by zhaowuxia begins
+            save_path=None
+            # added by zhaowuxia ends
+            ):
         
         X = standardize_X(X)
         y = standardize_y(y)
@@ -214,6 +218,11 @@ class Sequential(Model):
                     print("Train on %d samples, validate on %d samples" % (len(y), len(y_val)))
 
         index_array = np.arange(len(y))
+        
+        # added by zhaowuxia begins
+        min_val_loss = np.inf
+        max_val_acc = 0.
+        # added by zhaowuxia ends
 
         callbacks = cbks.CallbackList(callbacks)
         if verbose:
@@ -241,6 +250,9 @@ class Sequential(Model):
                 batch_ids = index_array[batch_start:batch_end]
                 X_batch = slice_X(X, batch_ids)
                 y_batch = y[batch_ids]
+                # added by zhaowuxia begins
+                val_loss = np.inf
+                # added by zhaowuxia ends
 
                 batch_logs = {}
                 batch_logs['batch'] = batch_index
@@ -265,9 +277,25 @@ class Sequential(Model):
                             val_loss, val_acc = self.evaluate(X_val, y_val, batch_size=batch_size, \
                                 verbose=0, show_accuracy=True)
                             epoch_logs['val_accuracy'] = val_acc
+                            # added by zhaowuxia begins
+                            max_val_acc = max(max_val_acc, val_acc)
+                            epoch_logs['max_val_accuracy'] = max_val_acc
+                            # added by zhaowuxia ends
                         else:
                             val_loss = self.evaluate(X_val, y_val, batch_size=batch_size, verbose=0)
+                        # added by zhaowuxia begins
+                        # save best model
+                        if save_path is not None:
+                            if val_loss < min_val_loss:
+                                print(epoch, 'save')
+                                self.save_weights(save_path, overwrite=True)
+                                min_val_loss = val_loss
                         epoch_logs['val_loss'] = val_loss
+                        epoch_logs['min_val_loss'] = min_val_loss
+                    elif save_path is not None:
+                        # No validation, just save the last model
+                        self.save_weights(save_path, overwrite=True)
+                    # added by zhaowuxia ends
 
             callbacks.on_epoch_end(epoch, epoch_logs)
 
