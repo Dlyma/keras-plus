@@ -287,9 +287,11 @@ class Sequential(Model):
                         # save best model
                         if save_path is not None:
                             if val_loss < min_val_loss:
-                                print(epoch, 'save')
-                                self.save_weights(save_path, overwrite=True)
                                 min_val_loss = val_loss
+                                print(epoch, 'save', min_val_loss)
+                                self.save_weights(save_path, overwrite=True)
+                            else:
+                                print(min_val_loss)
                         epoch_logs['val_loss'] = val_loss
                         epoch_logs['min_val_loss'] = min_val_loss
                     elif save_path is not None:

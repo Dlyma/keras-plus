@@ -440,34 +440,29 @@ class DEEPLSTM(Layer):
         if weights is not None:
             self.set_weights(weights)
 
-    def _step(self, 
-        #xi_t, xf_t, xo_t, xc_t, 
-        x,
+    def _step1(self, 
+        xi_t, xf_t, xo_t, xc_t, 
         h_tm1, c_tm1, 
-        u_i, u_f, u_o, u_c, 
-        w_i, w_f, w_o, w_c,
-        sz):
-
-        h_t = T.unbroadcast(alloc_zeros_matrix(self.num_blocks, sz, self.output_dim), 2)
-        c_t = T.unbroadcast(alloc_zeros_matrix(self.num_blocks, sz, self.output_dim), 2)
+        u_i, u_f, u_o, u_c):
         
-        for i in range(self.num_blocks):
-            xi_t = T.dot(x, self.W_i[i]) + self.b_i[i]
-            xf_t = T.dot(x, self.W_f[i]) + self.b_f[i]
-            xc_t = T.dot(x, self.W_c[i]) + self.b_c[i]
-            xo_t = T.dot(x, self.W_o[i]) + self.b_o[i]
-            if i == 0:
-                i_t = self.inner_activation(xi_t + T.dot(h_tm1[i], u_i[i]))
-                f_t = self.inner_activation(xf_t + T.dot(h_tm1[i], u_f[i]))
-                c_t = T.set_subtensor(c_t[i], f_t * c_tm1[i] + i_t * self.activation(xc_t + T.dot(h_tm1[i], u_c[i])))
-                o_t = self.inner_activation(xo_t + T.dot(h_tm1[i], u_o[i]))
-                h_t = T.set_subtensor(h_t[i], o_t * self.activation(c_t[i]))
-            else:
-                i_t = self.inner_activation(xi_t + T.dot(h_t[i-1], u_i[i]))
-                f_t = self.inner_activation(xf_t + T.dot(h_t[i-1], u_f[i]))
-                c_t = T.set_subtensor(c_t[i], f_t * c_tm1[i] + i_t * self.activation(xc_t + T.dot(h_t[i-1], u_c[i])))
-                o_t = self.inner_activation(xo_t + T.dot(h_t[i-1], u_o[i]))
-                h_t = T.set_subtensor(h_t[i], o_t * self.activation(c_t[i]))
+        i_t = self.inner_activation(xi_t + T.dot(h_tm1, u_i))
+        f_t = self.inner_activation(xf_t + T.dot(h_tm1, u_f))
+        c_t = f_t * c_tm1 + i_t * self.activation(xc_t + T.dot(h_tm1, u_c))
+        o_t = self.inner_activation(xo_t + T.dot(h_tm1, u_o))
+        h_t = o_t * self.activation(c_t)
+        
+        return h_t, c_t
+    
+    def _step2(self, 
+        xi_t, xf_t, xo_t, xc_t, in_t,
+        h_tm1, c_tm1, 
+        u_i, u_f, u_o, u_c):
+        
+        i_t = self.inner_activation(xi_t + T.dot(in_t, u_i))
+        f_t = self.inner_activation(xf_t + T.dot(in_t, u_f))
+        c_t = f_t * c_tm1 + i_t * self.activation(xc_t + T.dot(in_t, u_c))
+        o_t = self.inner_activation(xo_t + T.dot(in_t, u_o))
+        h_t = o_t * self.activation(c_t)
         
         return h_t, c_t
 
@@ -475,35 +470,51 @@ class DEEPLSTM(Layer):
         X = self.get_input(train) 
         X = X.dimshuffle((1,0,2)) #[T, sz, input_dim]
         
-        '''
-        xi = T.dot(X, self.W_i[0]) + self.b_i[0]
-        xf = T.dot(X, self.W_f[0]) + self.b_f[0]
-        xc = T.dot(X, self.W_c[0]) + self.b_c[0]
-        xo = T.dot(X, self.W_o[0]) + self.b_o[0]
-        '''
-        [outputs, memories], updates = theano.scan(
-            self._step, 
-            #sequences=[xi, xf, xo, xc],
-            sequences=[X],
-            outputs_info=[
-                T.unbroadcast(alloc_zeros_matrix(self.num_blocks, X.shape[1], self.output_dim), 2),
-                T.unbroadcast(alloc_zeros_matrix(self.num_blocks, X.shape[1], self.output_dim), 2)
-            ], 
-            non_sequences=[self.U_i, self.U_f, self.U_o, self.U_c, self.W_i, self.W_f, self.W_o, self.W_c, X.shape[1]], 
-            truncate_gradient=self.truncate_gradient 
-        )
+        output_list = []
+
+        for i in range(self.num_blocks):
+            xi = T.dot(X, self.W_i[i]) + self.b_i[i]
+            xf = T.dot(X, self.W_f[i]) + self.b_f[i]
+            xc = T.dot(X, self.W_c[i]) + self.b_c[i]
+            xo = T.dot(X, self.W_o[i]) + self.b_o[i]
         
+            if i == 0:
+                [outputs, memories], updates = theano.scan(
+                    self._step1, 
+                    sequences=[xi, xf, xo, xc],
+                    outputs_info=[
+                        T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1),
+                        T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1)
+                    ], 
+                    non_sequences=[self.U_i[i], self.U_f[i], self.U_o[i], self.U_c[i]], 
+                    truncate_gradient=self.truncate_gradient 
+                )
+            else:
+                [outputs, memories], updates = theano.scan(
+                    self._step2, 
+                    sequences=[xi, xf, xo, xc, output_list[i-1]],
+                    outputs_info=[
+                        T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1),
+                        T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1)
+                    ], 
+                    non_sequences=[self.U_i[i], self.U_f[i], self.U_o[i], self.U_c[i]], 
+                    truncate_gradient=self.truncate_gradient 
+                )
+            output_list.append(outputs.copy())
+        
+        final_outputs = []
         if self.num_blocks > 1:
-            output_list = [outputs[:, i] for i in range(self.num_blocks)]
             final_outputs = T.concatenate(output_list, axis=-1) #[T, sz, output_dim * num_blocks]
-       
+        else:
+            final_outputs = output_list[0] #[T, sz, output_dim]
+
         if self.return_seq_num <= 0:
-            return final_outputs.dimshuffle((1,0,2))
+            return final_outputs.dimshuffle((1,0,2)) #[sz, T, out * nb]
 
         elif self.return_seq_num > 1:
-            return final_outputs[-self.return_seq_num:].dimshuffle((1,0,2))
+            return final_outputs[-self.return_seq_num:].dimshuffle((1,0,2)) #[sz, return_seq_num, out * nb]
 
-        return final_outputs[-1]
+        return final_outputs[-1] #[sz, output_dim * num_blocks]
 
     def get_config(self):
         return {"name":self.__class__.__name__,
@@ -516,5 +527,3 @@ class DEEPLSTM(Layer):
             "truncate_gradient":self.truncate_gradient,
             "return_seq_num":self.return_seq_num,
             "num_blocks":self.num_blocks}
-        
-
