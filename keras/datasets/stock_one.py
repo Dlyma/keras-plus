@@ -5,7 +5,7 @@ import numpy as np
 
 # written by zhaowuxia @ 2015/5/22
 # used for generate datasets for the stock
-def generate_data(pkl_path, norm, sz, maxlen, mm, reverse):
+def generate_data(pkl_path, norm, sz, maxlen, step, mm, reverse):
     X = cPickle.load(open(pkl_path, 'rb'))[:mm+1]
     if reverse:
         X.reverse()
@@ -18,11 +18,10 @@ def generate_data(pkl_path, norm, sz, maxlen, mm, reverse):
         X = X*2 -1
     
     if maxlen is None:
-        maxlen = X.shape[0]-1
-    maxlen = min(maxlen+1, X.shape[0])
+        maxlen = (X.shape[0]-1)
+    maxlen = min(maxlen+1, X.shape[0])/step
     assert(maxlen > 1)
 
-    step = X.shape[0]/maxlen
     # data = np.zeros([step, maxlen, X.shape[1]])
     data = []
     for i in range(step):
@@ -39,6 +38,6 @@ def generate_data(pkl_path, norm, sz, maxlen, mm, reverse):
     Y = data[:, -1, :]
     return (X, Y) # [timerange/maxlen, maxlen, 5]
 
-def load_data(pkl_path, norm='minmax', sz=None, maxlen=None, mm=5000, reverse=False):
-    data = generate_data(pkl_path, norm, sz, maxlen, mm, reverse)
+def load_data(pkl_path, norm='minmax', sz=None, maxlen=None, step=1, mm=5000, reverse=False):
+    data = generate_data(pkl_path, norm, sz, maxlen, step, mm, reverse)
     return data
