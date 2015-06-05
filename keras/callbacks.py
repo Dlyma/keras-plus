@@ -139,9 +139,17 @@ class BaseLogger(Callback):
         if self.params['do_validation']:
             val_loss = logs.get('val_loss')
             self.log_values.append(('val. loss', val_loss))
+            # added by zhaowuxia begins
+            min_val_loss = logs.get('min_val_loss')
+            self.log_values.append(('min val. loss', min_val_loss))
+            # added by zhaowuxia ends
             if self.params['show_accuracy']:
                 val_acc = logs.get('val_accuracy')
                 self.log_values.append(('val. acc.', val_acc))
+                # added by zhaowuxia begins
+                max_val_acc = logs.get('max_val_accuracy')
+                self.log_values.append(('max val. loss', max_val_acc))
+                # added by zhaowuxia ends
         self.progbar.update(self.current, self.log_values)
 
 
