@@ -394,7 +394,7 @@ class DEEPLSTM(Layer):
             Supervised sequence labelling with recurrent neural networks
                 http://www.cs.toronto.edu/~graves/preprint.pdf
     '''
-    def __init__(self, input_dim, output_dim=128, 
+    def __init__(self, input_dim, output_dim=128*1, 
         init='glorot_uniform', inner_init='orthogonal', 
         activation='tanh', inner_activation='hard_sigmoid',
         weights=None, truncate_gradient=-1, return_seq_num=1, 
@@ -420,7 +420,8 @@ class DEEPLSTM(Layer):
         self.W_f = self.init((self.num_blocks, self.input_dim, self.output_dim))
         self.U_f = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
         # large initialization of forget gate is better
-        self.b_f = sharedX(np.ones((self.num_blocks, self.output_dim))*5)
+        #self.b_f = sharedX(np.ones((self.num_blocks, self.output_dim))*5)
+        self.b_f = shared_zeros((self.num_blocks, self.output_dim))
 
         self.W_c = self.init((self.num_blocks, self.input_dim, self.output_dim))
         self.U_c = self.inner_init((self.num_blocks, self.output_dim, self.output_dim))
@@ -470,16 +471,16 @@ class DEEPLSTM(Layer):
         X = self.get_input(train) 
         X = X.dimshuffle((1,0,2)) #[T, sz, input_dim]
         
-        output_list = []
+        outputs = []
 
         for i in range(self.num_blocks):
             xi = T.dot(X, self.W_i[i]) + self.b_i[i]
             xf = T.dot(X, self.W_f[i]) + self.b_f[i]
             xc = T.dot(X, self.W_c[i]) + self.b_c[i]
             xo = T.dot(X, self.W_o[i]) + self.b_o[i]
-        
+       
             if i == 0:
-                [outputs, memories], updates = theano.scan(
+                [output, memories], updates = theano.scan(
                     self._step1, 
                     sequences=[xi, xf, xo, xc],
                     outputs_info=[
@@ -489,10 +490,11 @@ class DEEPLSTM(Layer):
                     non_sequences=[self.U_i[i], self.U_f[i], self.U_o[i], self.U_c[i]], 
                     truncate_gradient=self.truncate_gradient 
                 )
+                outputs.append(output)
             else:
-                [outputs, memories], updates = theano.scan(
+                [output, memories], updates = theano.scan(
                     self._step2, 
-                    sequences=[xi, xf, xo, xc, output_list[i-1]],
+                    sequences=[xi, xf, xo, xc, outputs[i-1]],
                     outputs_info=[
                         T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1),
                         T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1)
@@ -500,21 +502,17 @@ class DEEPLSTM(Layer):
                     non_sequences=[self.U_i[i], self.U_f[i], self.U_o[i], self.U_c[i]], 
                     truncate_gradient=self.truncate_gradient 
                 )
-            output_list.append(outputs.copy())
+                outputs.append(output)
         
-        final_outputs = []
-        if self.num_blocks > 1:
-            final_outputs = T.concatenate(output_list, axis=-1) #[T, sz, output_dim * num_blocks]
-        else:
-            final_outputs = output_list[0] #[T, sz, output_dim]
+        outputs = T.concatenate(outputs, axis=-1) #[T, sz, output_dim * num_blocks]
 
         if self.return_seq_num <= 0:
-            return final_outputs.dimshuffle((1,0,2)) #[sz, T, out * nb]
+            return outputs.dimshuffle((1,0,2)) #[sz, T, out * nb]
 
         elif self.return_seq_num > 1:
-            return final_outputs[-self.return_seq_num:].dimshuffle((1,0,2)) #[sz, return_seq_num, out * nb]
+            return outputs[-self.return_seq_num:].dimshuffle((1,0,2)) #[sz, return_seq_num, out * nb]
 
-        return final_outputs[-1] #[sz, output_dim * num_blocks]
+        return outputs[-1] #[sz, output_dim * num_blocks]
 
     def get_config(self):
         return {"name":self.__class__.__name__,
