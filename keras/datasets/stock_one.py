@@ -10,6 +10,8 @@ def generate_data(pkl_path, norm, sz, maxlen, step, mm, reverse):
     if reverse:
         X.reverse()
     X = np.array(X)
+    mins = []
+    maxs = []
     if norm == 'minmax':
         mins = X.min(axis=0, keepdims=True)
         maxs = X.max(axis=0, keepdims=True) + 1e-4
@@ -36,7 +38,7 @@ def generate_data(pkl_path, norm, sz, maxlen, step, mm, reverse):
 
     X = data[:, :maxlen-1, :]
     Y = data[:, -1, :]
-    return (X, Y) # [timerange/maxlen, maxlen, 5]
+    return (X, Y, mins, maxs) # [timerange/maxlen, maxlen, 5]
 
 def load_data(pkl_path, norm='minmax', sz=None, maxlen=None, step=1, mm=5000, reverse=False):
     data = generate_data(pkl_path, norm, sz, maxlen, step, mm, reverse)

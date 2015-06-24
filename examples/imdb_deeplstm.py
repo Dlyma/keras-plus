@@ -60,8 +60,7 @@ hidden_units = 128
 print('Build model...')
 model = Sequential()
 model.add(Embedding(max_features, 256))
-model.add(DEEPLSTM(256, hidden_units, return_seq_num=1, num_blocks=nb)) # try using a GRU instead, for fun
-#model.add(LSTM(256, hidden_units))
+model.add(DEEPLSTM(256, hidden_units, return_seq_num=1, num_blocks=nb))
 model.add(Dropout(0.5))
 model.add(Dense(hidden_units*nb, 1))
 model.add(Activation('sigmoid'))

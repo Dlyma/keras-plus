@@ -14,7 +14,9 @@ def generate_data(pkl_path, T, norm):
             data.reverse()
             dataset.append(data)
     
-    dataset = np.array(dataset)
+    dataset = np.array(dataset) #[sz, T, nfea]
+    mins = []
+    maxs = []
     if norm == 'minmax':
         mins = dataset.min(axis=1, keepdims=True)
         maxs = dataset.max(axis=1, keepdims=True) + 1e-4
@@ -27,7 +29,7 @@ def generate_data(pkl_path, T, norm):
     X = dataset[:, :T, :]
     Y = dataset[:, -1, :]
 
-    return (X, Y)
+    return (X, Y, mins, maxs)
 
 def load_data(pkl_path, T, path='stock.pkl', norm='minmax'):
     data = []

@@ -505,14 +505,12 @@ class DEEPLSTM(Layer):
                 outputs.append(output)
         
         outputs = T.concatenate(outputs, axis=-1) #[T, sz, output_dim * num_blocks]
-
         if self.return_seq_num <= 0:
             return outputs.dimshuffle((1,0,2)) #[sz, T, out * nb]
-
         elif self.return_seq_num > 1:
             return outputs[-self.return_seq_num:].dimshuffle((1,0,2)) #[sz, return_seq_num, out * nb]
-
-        return outputs[-1] #[sz, output_dim * num_blocks]
+        else:
+            return outputs[-1] #[sz, output_dim * num_blocks]
 
     def get_config(self):
         return {"name":self.__class__.__name__,
