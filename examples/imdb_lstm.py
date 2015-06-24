@@ -55,14 +55,13 @@ X_test = sequence.pad_sequences(X_test, maxlen=maxlen)
 print('X_train shape:', X_train.shape)
 print('X_test shape:', X_test.shape)
 
-nb = 4 
 hidden_units = 128
 print('Build model...')
 model = Sequential()
 model.add(Embedding(max_features, 256))
 model.add(LSTM(256, hidden_units))
 model.add(Dropout(0.5))
-model.add(Dense(hidden_units*nb, 1))
+model.add(Dense(hidden_units, 1))
 model.add(Activation('sigmoid'))
 
 # try using different optimizers and different optimizer configs
