@@ -28,9 +28,15 @@ def generate_data(csv_path, norm, sz, maxlen, step, reverse):
             interest_6_M = float(line[8])
             interest_9_M = float(line[9])
             interest_1_Y = float(line[10])
+            pca_0 = float(line[17])
+            pca_1 = float(line[18])
+            pca_2 = float(line[19])
+            pca_3 = float(line[20])
+            pca_4 = float(line[21])
             X.append([purchase, redeem, yield1, yield7, interest_O_N, interest_1_W, interest_2_W, interest_1_M,\
                     interest_3_M, interest_6_M, interest_9_M, interest_1_Y, \
-                    direct_p, share_p, consume_r, transfer_r])
+                    direct_p, share_p, consume_r, transfer_r, \
+                    pca_0, pca_1, pca_2, pca_3, pca_4])
     if reverse:
         X.reverise()
     X = np.array(X)
