@@ -20,7 +20,8 @@ hidden_units = 256
 step = 1
 nb_sample = 100
 test_days = 30
-train_days = 427 - test_days*5
+n = 2
+train_days = 427 - test_days*n
 tg=-1
 train_split = 0.8
 features= [0,1]
@@ -150,7 +151,7 @@ if __name__=='__main__':
     pred2 = recurrent_predict(model, X[:, :train_days/2], train_days/2+2*test_days, return_sequences=True)
     write_csv('csv2/2fea/train2_1lstm%d_mae_%d_%d_%d.csv'%(hidden_units, nb_sample, train_days/2, train_days/2+2*test_days), gnd[0], pred2[0])
 
-    for step in range(0, test_days*5, test_days):
+    for step in range(0, test_days*(n-1), test_days):
         pred = recurrent_predict(model, gnd[:, step:train_days+test_days+step], test_days, return_sequences=True)
         pred = (pred[0]+1)/2*(maxs-mins)+mins
         error1 = compute_loss(gndo[train_days+test_days+step:train_days+2*test_days+step], gndo[train_days+step:train_days+test_days+step])
