@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
 import theano
+import theano.ifelse
 import theano.tensor as T
 import numpy as np
 
@@ -522,4 +523,129 @@ class DEEPLSTM(Layer):
             "inner_activation":self.inner_activation.__name__,
             "truncate_gradient":self.truncate_gradient,
             "return_seq_num":self.return_seq_num,
-            "num_blocks":self.num_blocks}
+            "num_blocks":self.num_blocks
+            }
+
+# added by zhaowuxia begins
+# a layer of clockwork RNN layer
+class CLOCKWORK(Layer):
+    '''A Clockwork RNN layer updates "modules" of neurons at specific rates.
+    In a vanilla :class:`RNN` layer, all neurons in the hidden pool are updated
+    at every time step by mixing an affine transformation of the input with an
+    affine transformation of the state of the hidden pool neurons at the
+    previous time step:
+    .. math::
+       h_t = g(x_tW_{xh} + h_{t-1}W_{hh} + b_h)
+    In a Clockwork RNN layer, neurons in the hidden pool are split into
+    :math:`M` "modules" of equal size (:math:`h^i` for :math:`i = 1, \dots, M`),
+    each of which has an associated clock period (a positive integer :math:`T_i`
+    for :math:`i = 1, \dots, M`). The neurons in module :math:`i` are updated
+    only when the time index :math:`t` of the input :math:`x_t` is an even
+    multiple of :math:`T_i`. Thus some of modules (those with large :math:`T`)
+    only respond to "slow" features in the input, and others (those with small
+    :math:`T`) respond to "fast" features.
+    Furthermore, "fast" modules with small periods receive inputs from "slow"
+    modules with large periods, but not vice-versa: this allows the "slow"
+    features to influence the "fast" features, but not the other way around.
+    The state :math:`h_t^i` of module :math:`i` at time step :math:`t` is thus
+    governed by the following mathematical relation:
+    .. math::
+       h_t^i = \left\{ \begin{align*}
+          &g\left( x_tW_{xh}^i + b_h^i +
+             \sum_{j=1}^i h_{t-1}^jW_{hh}^j\right)
+             \mbox{ if } t \mod T_i = 0 \\
+          &h_{t-1}^i \mbox{ otherwise.} \end{align*} \right.
+    Here, the modules have been ordered such that :math:`T_j > T_i` for
+    :math:`j < i`.
+    In ``theanets``, this update relation is implemented using a nested loop.
+    The outer loop calls Theano's ``scan()`` operator to iterate over the input
+    data at each time step. The inner loop iterates over the modules, updating
+    each module if the clock cycle is correct, and copying over the previous
+    value of the module if not.
+    Parameters
+    ----------
+    periods : sequence of int
+        The periods for the modules in this clockwork layer. The number of
+        values in this sequence specifies the number of modules in the layer.
+        The layer size must be an integer multiple of the number of modules
+        given in this sequence.
+    References
+    ----------
+    .. [1] J. Koutn¨ªk, K. Greff, F. Gomez, & J. Schmidhuber. (2014) "A Clockwork
+           RNN." http://arxiv.org/abs/1402.3511
+    '''
+    def __init__(self, input_dim, output_dim=128, 
+        init='glorot_uniform', inner_init='orthogonal', 
+        activation='tanh', inner_activation='hard_sigmoid',
+        weights=None, truncate_gradient=-1, return_seq_num=1, periods = [1]):
+    
+        super(CLOCKWORK,self).__init__()
+        assert(output_dim % len(periods) == 0)
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.truncate_gradient = truncate_gradient
+        self.return_seq_num = return_seq_num
+        self.periods = np.asarray(sorted(periods,reverse=True))
+
+        self.init = initializations.get(init)
+        self.inner_init = initializations.get(inner_init)
+        self.activation = activations.get(activation)
+        self.inner_activation = activations.get(inner_activation)
+        self.input = T.tensor3()
+
+        self.W = self.init((self.input_dim, self.output_dim))
+        self.b = shared_zeros((self.output_dim))
+        n = self.output_dim // len(self.periods)
+        self.U = [ self.inner_init(((i+1)*n, n)) for i in range(len(self.periods))]
+        self.params = [
+            self.W, self.b
+        ] + self.U
+
+        if weights is not None:
+            self.set_weights(weights)
+
+    def _step(self, 
+        t, x_t,
+        p_tm1, h_tm1):
+       
+        n = self.output_dim // len(self.periods)
+        p_t = T.concatenate([
+            theano.ifelse.ifelse(
+                T.eq(t%TT, 0),
+                x_t[:, i*n:(i+1)*n] + T.dot(h_tm1[:,:(i+1)*n], self.U[i]),
+                p_tm1[:, i*n:(i+1)*n])
+            for i, TT in enumerate(self.periods)], axis=1)
+        return p_t, self.activation(p_t)
+    
+    def get_output(self, train):
+        X = self.get_input(train) 
+        X = X.dimshuffle((1,0,2)) #[T, sz, input_dim]
+        
+        x = T.dot(X, self.W) + self.b
+        (pre, outputs), updates = theano.scan(
+            self._step, 
+            sequences=[T.arange(X.shape[0]), x], 
+            outputs_info=[
+                T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1),
+                T.unbroadcast(alloc_zeros_matrix(X.shape[1], self.output_dim), 1)],
+            truncate_gradient=self.truncate_gradient
+        )
+        
+        if self.return_seq_num <= 0:
+            return outputs.dimshuffle((1,0,2)) #[sz, T, out * nb]
+        elif self.return_seq_num > 1:
+            return outputs[-self.return_seq_num:].dimshuffle((1,0,2)) #[sz, return_seq_num, out * nb]
+        else:
+            return outputs[-1] #[sz, output_dim * num_blocks]
+
+    def get_config(self):
+        return {"name":self.__class__.__name__,
+            "input_dim":self.input_dim,
+            "output_dim":self.output_dim,
+            "init":self.init.__name__,
+            "inner_init":self.inner_init.__name__,
+            "activation":self.activation.__name__,
+            "inner_activation":self.inner_activation.__name__,
+            "truncate_gradient":self.truncate_gradient,
+            "return_seq_num":self.return_seq_num,
+            "periods":self.periods}
